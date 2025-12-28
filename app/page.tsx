@@ -159,6 +159,7 @@ export default function Home() {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
   const [heatmapData, setHeatmapData] = useState<{ day: string; hour: number; value: number }[]>([])
   const [wordsPerWeekData, setWordsPerWeekData] = useState<{ week: string; words: number }[]>([])
+  const [wordsPerWeekMessages, setWordsPerWeekMessages] = useState<{ text: string; date: Date; isFromMe: boolean; weekKey: string }[]>([])
   const [conversationRatioData, setConversationRatioData] = useState<{ week: string; you: number; them: number }[]>([])
   const [responseTimeData, setResponseTimeData] = useState<{ month: string; all: number | null; you: number | null }[]>([])
   const [replyLadderData, setReplyLadderData] = useState<{ doubleTextsYou: number; doubleTextsThem: number; endersYou: number; endersThem: number } | null>(null)
@@ -178,6 +179,10 @@ export default function Home() {
     longestTextThem: { text: string; length: number; date: Date } | null
     longestTexts: { text: string; length: number; isFromMe: boolean; date: Date }[]
     topEmojis: { emoji: string; count: number; isFromMe: boolean }[]
+    totalMessagesYou: number
+    totalMessagesThem: number
+    totalWordsYou: number
+    totalWordsThem: number
   } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -631,6 +636,7 @@ export default function Home() {
       if (messagesResult.length === 0) {
         setHeatmapData([])
         setWordsPerWeekData([])
+        setWordsPerWeekMessages([])
         setConversationRatioData([])
         setResponseTimeData([])
         setReplyLadderData(null)
@@ -827,6 +833,23 @@ export default function Home() {
           return aDate.getTime() - bDate.getTime()
         })
       setWordsPerWeekData(wordsPerWeek)
+      // Store only first 10 messages per week for the WordsPerWeek component (to speed up loading)
+      const messagesByWeek = new Map<string, Array<{ text: string; date: Date; isFromMe: boolean; weekKey: string }>>()
+      recentMessages.forEach(msg => {
+        const weekMsgs = messagesByWeek.get(msg.weekKey) || []
+        if (weekMsgs.length < 10) {
+          weekMsgs.push({
+            text: msg.text,
+            date: msg.date,
+            isFromMe: msg.isFromMe,
+            weekKey: msg.weekKey
+          })
+          messagesByWeek.set(msg.weekKey, weekMsgs)
+        }
+      })
+      // Flatten to array
+      const limitedMessages = Array.from(messagesByWeek.values()).flat()
+      setWordsPerWeekMessages(limitedMessages)
 
       // 3. Conversation Ratio - Count words per week for you vs them
       // Group messages by week and sender, sum word counts
@@ -1023,6 +1046,22 @@ export default function Home() {
       setSentimentData(sentimentTrends)
 
       // 7. Wrapped Stats
+      // Total messages count and word count
+      let totalMessagesYou = 0
+      let totalMessagesThem = 0
+      let totalWordsYou = 0
+      let totalWordsThem = 0
+      
+      processedMessages.forEach(msg => {
+        if (msg.isFromMe) {
+          totalMessagesYou++
+          totalWordsYou += msg.wordCount
+        } else {
+          totalMessagesThem++
+          totalWordsThem += msg.wordCount
+        }
+      })
+      
       // Most active single day (specific date)
       const dateCounts = new Map<string, { date: Date; count: number }>()
       processedMessages.forEach(msg => {
@@ -1273,7 +1312,11 @@ export default function Home() {
         longestTextYou,
         longestTextThem,
         longestTexts,
-        topEmojis: [...topEmojisYou, ...topEmojisThem].sort((a, b) => b.count - a.count).slice(0, 10)
+        topEmojis: [...topEmojisYou, ...topEmojisThem].sort((a, b) => b.count - a.count).slice(0, 10),
+        totalMessagesYou,
+        totalMessagesThem,
+        totalWordsYou,
+        totalWordsThem
       })
 
     } catch (err: any) {
@@ -1457,6 +1500,7 @@ export default function Home() {
               setSelectedContact(null)
               setHeatmapData([])
               setWordsPerWeekData([])
+              setWordsPerWeekMessages([])
               setConversationRatioData([])
               setResponseTimeData([])
               setReplyLadderData(null)
@@ -1603,7 +1647,24 @@ export default function Home() {
             {wrappedStats && (
               <div className="bg-gradient-to-br from-purple-500 via-pink-500 to-red-500 rounded-lg shadow-xl p-8 text-white">
                 <h2 className="text-3xl font-bold mb-6 text-center">Your Conversation Wrapped</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {/* Total Messages */}
+                  <div className="bg-white/10 backdrop-blur-sm rounded-lg p-6 border border-white/20">
+                    <div className="text-sm opacity-90 mb-3">Total Messages</div>
+                    <div className="space-y-2">
+                      <div>
+                        <div className="text-xs opacity-75 mb-1">You</div>
+                        <div className="text-2xl font-bold">{wrappedStats.totalMessagesYou.toLocaleString()}</div>
+                        <div className="text-xs opacity-75 mt-1">{wrappedStats.totalWordsYou.toLocaleString()} words</div>
+                      </div>
+                      <div className="border-t border-white/20 pt-2">
+                        <div className="text-xs opacity-75 mb-1">Them</div>
+                        <div className="text-2xl font-bold">{wrappedStats.totalMessagesThem.toLocaleString()}</div>
+                        <div className="text-xs opacity-75 mt-1">{wrappedStats.totalWordsThem.toLocaleString()} words</div>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Most Active Day */}
                   {wrappedStats.mostActiveDay && (
                     <div className="bg-white/10 backdrop-blur-sm rounded-lg p-6 border border-white/20">
@@ -1694,7 +1755,7 @@ export default function Home() {
                     ? ` for ${selectedContact.name || selectedContact.id || 'selected contact'}`
                     : ' across all chats'}
                 </p>
-                <WordsPerWeek data={wordsPerWeekData} />
+                <WordsPerWeek data={wordsPerWeekData} messages={wordsPerWeekMessages} />
               </div>
             )}
 
