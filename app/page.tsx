@@ -9,6 +9,7 @@ import { ConversationRatio } from '@/components/ConversationRatio'
 import { ResponseTime } from '@/components/ResponseTime'
 import { ReplyLadder } from '@/components/ReplyLadder'
 import { SentimentTrend } from '@/components/SentimentTrend'
+import { generateSampleData } from '@/lib/sampleData'
 
 // Component for message with hover tooltip
 function MessagePreview({ text, className }: { text: string; className?: string }) {
@@ -184,8 +185,18 @@ export default function Home() {
     totalWordsYou: number
     totalWordsThem: number
   } | null>(null)
+  const [isMac, setIsMac] = useState<boolean | null>(null)
+  const [bypassWarning, setBypassWarning] = useState(false)
+  const [isSampleData, setIsSampleData] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Detect platform
+  useEffect(() => {
+    const userAgent = navigator.userAgent.toLowerCase()
+    const isMacOS = userAgent.includes('mac os x') || userAgent.includes('macintosh')
+    setIsMac(isMacOS)
+  }, [])
 
   // Load sql.js on component mount
   useEffect(() => {
@@ -1325,6 +1336,389 @@ export default function Home() {
     }
   }
 
+  const processSampleData = async () => {
+    try {
+      setProcessing(true)
+      setError(null)
+      
+      const sampleMessages = generateSampleData()
+      
+      // Create fake contact
+      const fakeContact: Contact = {
+        rowid: 1,
+        id: 'sample@example.com',
+        name: 'Sample Contact',
+        messageCount: sampleMessages.length,
+        lastMessage: sampleMessages[sampleMessages.length - 1]?.text || '',
+        lastMessageDate: sampleMessages[sampleMessages.length - 1]?.date.getTime() || Date.now()
+      }
+      
+      setContacts([fakeContact])
+      setSelectedContact(null)
+      setIsSampleData(true)
+      
+      // Process the sample messages similar to processAllVisualizations
+      // 1. Heatmap
+      const heatmapMap = new Map<string, number>()
+      sampleMessages.forEach(msg => {
+        const key = `${msg.dayName}-${msg.hour}`
+        heatmapMap.set(key, (heatmapMap.get(key) || 0) + 1)
+      })
+      const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+      const heatmapData: { day: string; hour: number; value: number }[] = []
+      dayOrder.forEach(day => {
+        for (let hour = 0; hour < 24; hour++) {
+          const key = `${day}-${hour}`
+          heatmapData.push({
+            day,
+            hour,
+            value: heatmapMap.get(key) || 0
+          })
+        }
+      })
+      setHeatmapData(heatmapData)
+
+      // 2. Words per Week
+      const sixMonthsAgo = new Date()
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
+      const recentMessages = sampleMessages.filter(m => m.date >= sixMonthsAgo)
+      const weeklyWords = new Map<string, { words: number; date: Date }>()
+      recentMessages.forEach(msg => {
+        const existing = weeklyWords.get(msg.weekKey)
+        if (!existing || msg.date < existing.date) {
+          weeklyWords.set(msg.weekKey, { words: (existing?.words || 0) + msg.wordCount, date: msg.date })
+        } else {
+          existing.words += msg.wordCount
+        }
+      })
+      const wordsPerWeek = Array.from(weeklyWords.entries())
+        .map(([week, data]) => {
+          const weekStart = new Date(data.date)
+          weekStart.setDate(weekStart.getDate() - weekStart.getDay())
+          return { 
+            week: weekStart.toLocaleDateString([], { month: 'short', day: 'numeric' }), 
+            words: data.words 
+          }
+        })
+        .sort((a, b) => {
+          const aDate = new Date(a.week)
+          const bDate = new Date(b.week)
+          return aDate.getTime() - bDate.getTime()
+        })
+      setWordsPerWeekData(wordsPerWeek)
+      
+      const messagesByWeek = new Map<string, Array<{ text: string; date: Date; isFromMe: boolean; weekKey: string }>>()
+      recentMessages.forEach(msg => {
+        const weekMsgs = messagesByWeek.get(msg.weekKey) || []
+        if (weekMsgs.length < 10) {
+          weekMsgs.push({
+            text: msg.text,
+            date: msg.date,
+            isFromMe: msg.isFromMe,
+            weekKey: msg.weekKey
+          })
+          messagesByWeek.set(msg.weekKey, weekMsgs)
+        }
+      })
+      const limitedMessages = Array.from(messagesByWeek.values()).flat()
+      setWordsPerWeekMessages(limitedMessages)
+
+      // 3. Conversation Ratio
+      const weeklyRatio = new Map<string, { you: number; them: number; weekStart: Date }>()
+      recentMessages.forEach(msg => {
+        const weekStart = new Date(msg.date)
+        weekStart.setDate(weekStart.getDate() - weekStart.getDay() + (weekStart.getDay() === 0 ? -6 : 1))
+        weekStart.setHours(0, 0, 0, 0)
+        const weekKey = weekStart.toISOString().split('T')[0]
+        
+        const existing = weeklyRatio.get(weekKey)
+        if (!existing) {
+          weeklyRatio.set(weekKey, {
+            you: msg.isFromMe ? msg.wordCount : 0,
+            them: msg.isFromMe ? 0 : msg.wordCount,
+            weekStart: weekStart
+          })
+        } else {
+          if (msg.isFromMe) {
+            existing.you += msg.wordCount
+          } else {
+            existing.them += msg.wordCount
+          }
+        }
+      })
+      
+      const conversationRatio = Array.from(weeklyRatio.entries())
+        .map(([weekKey, counts]) => {
+          const total = counts.you + counts.them
+          return {
+            week: counts.weekStart.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+            you: total > 0 ? counts.you / total : 0,
+            them: total > 0 ? counts.them / total : 0
+          }
+        })
+        .sort((a, b) => {
+          const aDate = new Date(a.week)
+          const bDate = new Date(b.week)
+          return aDate.getTime() - bDate.getTime()
+        })
+      setConversationRatioData(conversationRatio)
+
+      // 4. Response Time
+      const sortedMessages = [...sampleMessages].sort((a, b) => a.date.getTime() - b.date.getTime())
+      const monthlyResponseTimes: Map<string, number[]> = new Map()
+      const monthlyYouResponseTimes: Map<string, number[]> = new Map()
+      
+      for (let i = 1; i < sortedMessages.length; i++) {
+        const prev = sortedMessages[i - 1]
+        const curr = sortedMessages[i]
+        
+        if (prev.isFromMe !== curr.isFromMe) {
+          const timeDiffHours = (curr.date.getTime() - prev.date.getTime()) / (1000 * 60 * 60)
+          if (timeDiffHours > 0 && timeDiffHours < 168) {
+            const times = monthlyResponseTimes.get(curr.monthKey) || []
+            times.push(timeDiffHours)
+            monthlyResponseTimes.set(curr.monthKey, times)
+            
+            if (!prev.isFromMe && curr.isFromMe) {
+              const youTimes = monthlyYouResponseTimes.get(curr.monthKey) || []
+              youTimes.push(timeDiffHours)
+              monthlyYouResponseTimes.set(curr.monthKey, youTimes)
+            }
+          }
+        }
+      }
+      
+      const allMonthsArray = Array.from(new Set([...Array.from(monthlyResponseTimes.keys()), ...Array.from(monthlyYouResponseTimes.keys())]))
+      const responseTime = allMonthsArray
+        .sort()
+        .map(month => {
+          const allTimes = monthlyResponseTimes.get(month) || []
+          const youTimes = monthlyYouResponseTimes.get(month) || []
+          
+          const median = (arr: number[]) => {
+            if (arr.length === 0) return null
+            const sorted = [...arr].sort((a, b) => a - b)
+            const mid = Math.floor(sorted.length / 2)
+            return sorted.length % 2 === 0 
+              ? (sorted[mid - 1] + sorted[mid]) / 2 
+              : sorted[mid]
+          }
+          
+          return {
+            month,
+            all: median(allTimes),
+            you: median(youTimes)
+          }
+        })
+      setResponseTimeData(responseTime)
+
+      // 5. Reply Ladder
+      let doubleTextsYou = 0
+      let doubleTextsThem = 0
+      const conversationEnders = { you: 0, them: 0 }
+      
+      for (let i = 0; i < sortedMessages.length - 1; i++) {
+        const curr = sortedMessages[i]
+        const next = sortedMessages[i + 1]
+        const timeDiffMinutes = (next.date.getTime() - curr.date.getTime()) / (1000 * 60)
+        
+        if (timeDiffMinutes < 5 && curr.isFromMe === next.isFromMe) {
+          if (curr.isFromMe) doubleTextsYou++
+          else doubleTextsThem++
+        }
+      }
+      
+      const CONVERSATION_GAP_HOURS = 24
+      const conversations: Array<Array<typeof sortedMessages[0]>> = []
+      let currentConversation: Array<typeof sortedMessages[0]> = [sortedMessages[0]]
+      
+      for (let i = 1; i < sortedMessages.length; i++) {
+        const prev = sortedMessages[i - 1]
+        const curr = sortedMessages[i]
+        const timeDiffHours = (curr.date.getTime() - prev.date.getTime()) / (1000 * 60 * 60)
+        
+        if (timeDiffHours >= CONVERSATION_GAP_HOURS) {
+          conversations.push(currentConversation)
+          currentConversation = [curr]
+        } else {
+          currentConversation.push(curr)
+        }
+      }
+      
+      if (currentConversation.length > 0) {
+        conversations.push(currentConversation)
+      }
+      
+      conversations.forEach(conversation => {
+        if (conversation.length > 0) {
+          const lastMessage = conversation[conversation.length - 1]
+          if (lastMessage.isFromMe) {
+            conversationEnders.you++
+          } else {
+            conversationEnders.them++
+          }
+        }
+      })
+      
+      setReplyLadderData({
+        doubleTextsYou,
+        doubleTextsThem,
+        endersYou: conversationEnders.you,
+        endersThem: conversationEnders.them
+      })
+
+      // 6. Sentiment Trends
+      const weeklySentimentData: Map<string, { you: number[]; them: number[]; all: number[] }> = new Map()
+      sampleMessages.forEach(msg => {
+        const existing = weeklySentimentData.get(msg.weekKey) || { you: [], them: [], all: [] }
+        existing.all.push(msg.sentiment)
+        if (msg.isFromMe) {
+          existing.you.push(msg.sentiment)
+        } else {
+          existing.them.push(msg.sentiment)
+        }
+        weeklySentimentData.set(msg.weekKey, existing)
+      })
+      
+      const avg = (arr: number[]) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null
+      const sentimentTrends = Array.from(weeklySentimentData.entries())
+        .map(([week, sentiments]) => {
+          const weekMessages = sampleMessages.filter(m => m.weekKey === week)
+          const weekDate = weekMessages.length > 0 ? weekMessages[0].date : new Date()
+          const weekStart = new Date(weekDate)
+          weekStart.setDate(weekStart.getDate() - weekStart.getDay())
+          return {
+            week: weekStart.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+            you: avg(sentiments.you),
+            them: avg(sentiments.them),
+            all: avg(sentiments.all)
+          }
+        })
+        .sort((a, b) => {
+          const aDate = new Date(a.week)
+          const bDate = new Date(b.week)
+          return aDate.getTime() - bDate.getTime()
+        })
+      setSentimentData(sentimentTrends)
+
+      // 7. Wrapped Stats
+      let totalMessagesYou = 0
+      let totalMessagesThem = 0
+      let totalWordsYou = 0
+      let totalWordsThem = 0
+      
+      sampleMessages.forEach(msg => {
+        if (msg.isFromMe) {
+          totalMessagesYou++
+          totalWordsYou += msg.wordCount
+        } else {
+          totalMessagesThem++
+          totalWordsThem += msg.wordCount
+        }
+      })
+      
+      const dateCounts = new Map<string, { date: Date; count: number }>()
+      sampleMessages.forEach(msg => {
+        const dateKey = msg.date.toISOString().split('T')[0]
+        const existing = dateCounts.get(dateKey)
+        if (existing) {
+          existing.count++
+        } else {
+          dateCounts.set(dateKey, { date: new Date(msg.date), count: 1 })
+        }
+      })
+      const mostActiveDay = Array.from(dateCounts.values())
+        .sort((a, b) => b.count - a.count)[0] || null
+
+      let longestText: { text: string; length: number; isFromMe: boolean; date: Date } | null = null
+      let longestTextYou: { text: string; length: number; date: Date } | null = null
+      let longestTextThem: { text: string; length: number; date: Date } | null = null
+      const allLongestTexts: { text: string; length: number; isFromMe: boolean; date: Date }[] = []
+      
+      sampleMessages.forEach(msg => {
+        const textLength = msg.text.length
+        allLongestTexts.push({
+          text: msg.text,
+          length: textLength,
+          isFromMe: msg.isFromMe,
+          date: msg.date
+        })
+        
+        if (!longestText || textLength > longestText.length) {
+          longestText = {
+            text: msg.text,
+            length: textLength,
+            isFromMe: msg.isFromMe,
+            date: msg.date
+          }
+        }
+        
+        if (msg.isFromMe && (!longestTextYou || textLength > longestTextYou.length)) {
+          longestTextYou = {
+            text: msg.text,
+            length: textLength,
+            date: msg.date
+          }
+        }
+        
+        if (!msg.isFromMe && (!longestTextThem || textLength > longestTextThem.length)) {
+          longestTextThem = {
+            text: msg.text,
+            length: textLength,
+            date: msg.date
+          }
+        }
+      })
+      
+      const longestTexts = allLongestTexts
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 10)
+
+      // Emoji extraction (simplified)
+      const emojiCountsYou = new Map<string, number>()
+      const emojiCountsThem = new Map<string, number>()
+      
+      sampleMessages.forEach(msg => {
+        const emojiRegex = /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/gu
+        const emojis = msg.text.match(emojiRegex) || []
+        emojis.forEach(emoji => {
+          const emojiMap = msg.isFromMe ? emojiCountsYou : emojiCountsThem
+          emojiMap.set(emoji, (emojiMap.get(emoji) || 0) + 1)
+        })
+      })
+
+      const topEmojisYou = Array.from(emojiCountsYou.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([emoji, count]) => ({ emoji, count, isFromMe: true }))
+      
+      const topEmojisThem = Array.from(emojiCountsThem.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([emoji, count]) => ({ emoji, count, isFromMe: false }))
+
+      setWrappedStats({
+        mostActiveDay,
+        longestText,
+        longestTextYou,
+        longestTextThem,
+        longestTexts,
+        topEmojis: [...topEmojisYou, ...topEmojisThem].sort((a, b) => b.count - a.count).slice(0, 10),
+        totalMessagesYou,
+        totalMessagesThem,
+        totalWordsYou,
+        totalWordsThem
+      })
+
+      setScreen('dashboard')
+      setProcessing(false)
+    } catch (err: any) {
+      setError(`Error processing sample data: ${err.message}`)
+      console.error(err)
+      setProcessing(false)
+    }
+  }
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -1425,6 +1819,8 @@ export default function Home() {
 
   // Upload Screen
   if (screen === 'upload') {
+    const showWarning = isMac === false && !bypassWarning
+    
     return (
       <main className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-8">
         <div className="max-w-2xl w-full">
@@ -1432,46 +1828,121 @@ export default function Home() {
             <h1 className="text-4xl font-bold text-gray-900 mb-2">iMessage Analysis</h1>
             <p className="text-gray-600 mb-8">Upload your chat.db file to explore conversation visualizations</p>
 
-            <div className="mb-4">
-              <p className="text-sm text-gray-600 mb-2">Default location on macOS:</p>
-              <div className="bg-gray-100 px-3 py-2 rounded text-sm font-mono text-gray-800 mb-2 flex items-center justify-between">
-                <code>~/Library/Messages/chat.db</code>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText('~/Library/Messages/chat.db')
-                      .then(() => alert('Path copied to clipboard! You can paste it in Finder (Cmd+Shift+G)'))
-                      .catch(() => {})
-                  }}
-                  className="ml-2 text-xs text-indigo-600 hover:text-indigo-800 underline"
-                >
-                  Copy path
-                </button>
+            {showWarning && (
+              <div className="mb-6 bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0">
+                    <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div className="ml-3 flex-1">
+                    <h3 className="text-lg font-semibold text-yellow-800 mb-2">
+                      macOS Required
+                    </h3>
+                    <p className="text-sm text-yellow-700 mb-4">
+                      This tool is designed to work with macOS iMessage databases. The chat.db file is only accessible on macOS systems. However, you can still explore the example analysis below to see what the tool can do!
+                    </p>
+                    <button
+                      onClick={() => setBypassWarning(true)}
+                      className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg text-sm font-medium transition-colors"
+                    >
+                      I Understand, Continue Anyway
+                    </button>
+                  </div>
+                </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">
-                💡 Tip: In Finder, press <kbd className="px-1 py-0.5 bg-gray-200 rounded text-xs">Cmd+Shift+G</kbd> and paste the path to navigate there quickly. Make sure to close the Messages app first!
-              </p>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".db"
-              onChange={handleFileUpload}
-              className="hidden"
-              id="db-upload"
-            />
-            <label
-              htmlFor="db-upload"
-              className={`inline-block px-6 py-3 rounded-lg transition-colors shadow-md ${
-                !sqlLoaded || loading
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-indigo-600 hover:bg-indigo-700 cursor-pointer'
-              } text-white`}
-            >
-              {!sqlLoaded ? 'Loading SQL.js...' : loading ? 'Loading database...' : 'Open chat.db file'}
-            </label>
-            {!sqlLoaded && (
-              <p className="mt-2 text-sm text-gray-500">Initializing SQL.js library...</p>
             )}
+
+            {!showWarning && (
+              <>
+                <div className="mb-4">
+                  <p className="text-sm text-gray-600 mb-2">Default location on macOS:</p>
+                  <div className="bg-gray-100 px-3 py-2 rounded text-sm font-mono text-gray-800 mb-2 flex items-center justify-between">
+                    <code>~/Library/Messages/chat.db</code>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText('~/Library/Messages/chat.db')
+                          .then(() => alert('Path copied to clipboard! You can paste it in Finder (Cmd+Shift+G)'))
+                          .catch(() => {})
+                      }}
+                      className="ml-2 text-xs text-indigo-600 hover:text-indigo-800 underline"
+                    >
+                      Copy path
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    💡 Tip: In Finder, press <kbd className="px-1 py-0.5 bg-gray-200 rounded text-xs">Cmd+Shift+G</kbd> and paste the path to navigate there quickly. Make sure to close the Messages app first!
+                  </p>
+                </div>
+                <div className="flex flex-col gap-3 mb-4">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".db"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                    id="db-upload"
+                  />
+                  <label
+                    htmlFor="db-upload"
+                    className={`inline-block px-6 py-3 rounded-lg transition-colors shadow-md text-center ${
+                      !sqlLoaded || loading
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700 cursor-pointer'
+                    } text-white`}
+                  >
+                    {!sqlLoaded ? 'Loading SQL.js...' : loading ? 'Loading database...' : 'Upload chat.db file'}
+                  </label>
+                  
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-gray-300"></div>
+                    </div>
+                    <div className="relative flex justify-center text-sm">
+                      <span className="px-2 bg-white text-gray-500">or</span>
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={processSampleData}
+                    disabled={processing}
+                    className={`px-6 py-3 rounded-lg transition-colors shadow-md ${
+                      processing
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-green-600 hover:bg-green-700 cursor-pointer'
+                    } text-white`}
+                  >
+                    {processing ? 'Loading example...' : 'View Example Analysis'}
+                  </button>
+                  <p className="text-xs text-gray-500 text-center">
+                    Explore a sample analysis with ~500 fake messages to see what the tool can do
+                  </p>
+                </div>
+                {!sqlLoaded && (
+                  <p className="mt-2 text-sm text-gray-500">Initializing SQL.js library...</p>
+                )}
+                
+                <div className="mt-6 bg-green-50 border-2 border-green-200 rounded-lg p-4">
+                  <div className="flex items-start">
+                    <div className="flex-shrink-0">
+                      <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
+                    </div>
+                    <div className="ml-3 flex-1">
+                      <h3 className="text-sm font-semibold text-green-800 mb-1">
+                        🔒 Your Privacy is Protected
+                      </h3>
+                      <p className="text-xs text-green-700">
+                        All processing happens <strong>entirely in your browser</strong>. Your database file is never uploaded to any server. Your data stays on your device and is never sent over the network.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+            
             {error && (
               <div className="mt-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
                 {error}
@@ -1492,33 +1963,43 @@ export default function Home() {
             <h1 className="text-4xl font-bold text-gray-900 mb-2">iMessage Analysis</h1>
             <p className="text-gray-600">Explore your conversation visualizations</p>
           </div>
-          <button
-            onClick={() => {
-              setScreen('upload')
-              setDb(null)
-              setContacts([])
-              setSelectedContact(null)
-              setHeatmapData([])
-              setWordsPerWeekData([])
-              setWordsPerWeekMessages([])
-              setConversationRatioData([])
-              setResponseTimeData([])
-              setReplyLadderData(null)
-              setSentimentData([])
-              if (fileInputRef.current) {
-                fileInputRef.current.value = ''
-              }
-            }}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50"
-          >
-            Load Different Database
-          </button>
+          <div className="flex items-center gap-3">
+            {isSampleData && (
+              <div className="px-3 py-1.5 bg-blue-100 border border-blue-300 rounded-lg text-sm text-blue-800">
+                📊 Viewing Example Analysis
+              </div>
+            )}
+            <button
+              onClick={() => {
+                setScreen('upload')
+                setDb(null)
+                setContacts([])
+                setSelectedContact(null)
+                setHeatmapData([])
+                setWordsPerWeekData([])
+                setWordsPerWeekMessages([])
+                setConversationRatioData([])
+                setResponseTimeData([])
+                setReplyLadderData(null)
+                setSentimentData([])
+                setIsSampleData(false)
+                if (fileInputRef.current) {
+                  fileInputRef.current.value = ''
+                }
+              }}
+              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              {isSampleData ? 'Load Your Database' : 'Load Different Database'}
+            </button>
+          </div>
         </div>
 
         {/* Contact Dropdown */}
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-semibold text-gray-800">Select Contact</h2>
+            <h2 className="text-2xl font-semibold text-gray-800">
+              {isSampleData ? 'Sample Analysis' : 'Select Contact'}
+            </h2>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -1551,14 +2032,21 @@ export default function Home() {
           )}
           <div className="relative" ref={dropdownRef}>
             <button
-              onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="w-full p-4 rounded-lg border-2 border-gray-200 hover:border-indigo-300 text-left bg-white text-gray-800 flex items-center justify-between"
+              onClick={() => !isSampleData && setDropdownOpen(!dropdownOpen)}
+              disabled={isSampleData}
+              className={`w-full p-4 rounded-lg border-2 ${
+                isSampleData 
+                  ? 'border-gray-200 bg-gray-50 cursor-not-allowed' 
+                  : 'border-gray-200 hover:border-indigo-300 bg-white'
+              } text-left text-gray-800 flex items-center justify-between`}
             >
               <div className="flex-1 min-w-0">
                 <div className="font-medium truncate">
-                  {selectedContact 
-                    ? (selectedContact.name || selectedContact.id || 'Unknown')
-                    : 'All Chats'}
+                  {isSampleData 
+                    ? 'Sample Contact (Example Data)'
+                    : selectedContact 
+                      ? (selectedContact.name || selectedContact.id || 'Unknown')
+                      : 'All Chats'}
                 </div>
                 {selectedContact && selectedContact.name && (
                   <div className="text-xs text-gray-500 truncate mt-1">{selectedContact.id}</div>
@@ -1579,7 +2067,7 @@ export default function Home() {
               </svg>
             </button>
 
-            {dropdownOpen && (
+            {dropdownOpen && !isSampleData && (
               <div className="absolute z-50 w-full mt-2 bg-white border-2 border-gray-200 rounded-lg shadow-lg max-h-96 overflow-y-auto">
                 <button
                   onClick={() => handleContactSelect(null)}

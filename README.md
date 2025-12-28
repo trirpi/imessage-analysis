@@ -7,6 +7,13 @@ A Next.js web application for analyzing iMessage conversations with interactive 
 - **Database Upload**: Upload your `chat.db` file directly in the browser
 - **Contact Selection**: Browse and select from all contacts in your database
 - **Activity Heatmap**: Visualize message activity by hour of day and day of week
+- **Example Analysis**: Try the tool with sample data without uploading your database
+
+## Screenshots
+
+![Dashboard with Sample Analysis](screenshots/dashboard-sample.png)
+
+*Example analysis showing the Conversation Wrapped stats, activity heatmap, and other visualizations with sample data*
 
 ## Getting Started
 
