@@ -1137,27 +1137,30 @@ export default function Home() {
         .sort((a, b) => b.length - a.length)
         .slice(0, 10)
 
-      // Most used emojis - extract complete emoji sequences
+      // Most used emojis - use Intl.Segmenter to properly handle multi-codepoint emojis
+      // (ZWJ sequences, skin tone modifiers, flag emojis, etc.)
       const emojiCountsYou = new Map<string, number>()
       const emojiCountsThem = new Map<string, number>()
       
-      // Helper to check if a code point is a base emoji
-      const isBaseEmojiCode = (code: number): boolean => {
-        return (
-          (code >= 0x1F300 && code <= 0x1F9FF) || // Misc Symbols and Pictographs
-          (code >= 0x2600 && code <= 0x26FF) ||    // Misc symbols
-          (code >= 0x2700 && code <= 0x27BF) ||    // Dingbats
-          (code >= 0x1F600 && code <= 0x1F64F) ||  // Emoticons
-          (code >= 0x1F680 && code <= 0x1F6FF) ||  // Transport and Map
-          (code >= 0x1F1E0 && code <= 0x1F1FF)      // Flags
-        )
-      }
+      // Use Intl.Segmenter for proper grapheme cluster segmentation
+      const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' })
       
-      // Helper to check if a string contains at least one base emoji
-      const hasBaseEmoji = (str: string): boolean => {
-        for (let i = 0; i < str.length; i++) {
-          const code = str.codePointAt(i) || 0
-          if (isBaseEmojiCode(code)) {
+      // Check if a grapheme is an emoji by checking if any code point is in emoji ranges
+      const isEmojiGrapheme = (grapheme: string): boolean => {
+        for (const char of grapheme) {
+          const code = char.codePointAt(0) || 0
+          if (
+            (code >= 0x1F300 && code <= 0x1FAFF) || // Most pictographic emojis
+            (code >= 0x2600 && code <= 0x26FF) ||   // Misc symbols
+            (code >= 0x2700 && code <= 0x27BF) ||   // Dingbats
+            (code >= 0x1F000 && code <= 0x1F0FF) || // Game symbols (mahjong, cards)
+            (code >= 0x1F100 && code <= 0x1F1FF) || // Enclosed alphanumerics (flags)
+            (code >= 0x1F200 && code <= 0x1F2FF) || // Enclosed ideographic
+            (code >= 0x2300 && code <= 0x23FF) ||   // Misc technical
+            (code >= 0x2B50 && code <= 0x2B55) ||   // Stars, circles
+            (code >= 0x203C && code <= 0x3299) ||   // Various symbols (includes ‼️, ⁉️, ™️, etc.)
+            (code >= 0xE0020 && code <= 0xE007F)    // Tags for subdivision flags
+          ) {
             return true
           }
         }
@@ -1165,154 +1168,24 @@ export default function Home() {
       }
       
       processedMessages.forEach(msg => {
-        // Extract complete emoji sequences (base emoji + modifiers)
-        const emojis: string[] = []
-        let currentSequence = ''
-        let hasBase = false
-        
-        for (let i = 0; i < msg.text.length; i++) {
-          const char = msg.text[i]
-          const code = char.codePointAt(0) || 0
-          
-          // Check if it's a base emoji character
-          const isBase = isBaseEmojiCode(code)
-          
-          // Check if it's a modifier/joiner
-          const isModifier = (
-            (code >= 0x1F3FB && code <= 0x1F3FF) ||  // Skin tone modifiers
-            (code >= 0xFE00 && code <= 0xFE0F) ||    // Variation selectors
-            code === 0x200D ||                        // Zero-width joiner
-            code === 0x2640 ||                        // Female sign
-            code === 0x2642                           // Male sign
-          )
-          
-          if (isBase) {
-            // If we have a previous sequence, save it
-            if (currentSequence && hasBase) {
-              emojis.push(currentSequence)
-            }
-            // Start new sequence with this base emoji
-            currentSequence = char
-            hasBase = true
-          } else if (isModifier && hasBase) {
-            // Add modifier to current sequence if we have a base emoji
-            currentSequence += char
-          } else {
-            // Non-emoji character - save current sequence if valid
-            if (currentSequence && hasBase) {
-              emojis.push(currentSequence)
-            }
-            currentSequence = ''
-            hasBase = false
-          }
-        }
-        
-        // Handle emoji at end of string
-        if (currentSequence && hasBase) {
-          emojis.push(currentSequence)
-        }
-        
-        // Also count standalone modifiers (like yellow square) - but only skin tone modifiers
-        for (let i = 0; i < msg.text.length; i++) {
-          const char = msg.text[i]
-          const code = char.codePointAt(0) || 0
-          
-          // Only count standalone skin tone modifiers (not gender signs)
-          if (code >= 0x1F3FB && code <= 0x1F3FF) {
-            // Check if it's not part of an emoji sequence
-            const prevChar = i > 0 ? msg.text[i - 1] : ''
-            const prevCode = prevChar ? prevChar.codePointAt(0) || 0 : 0
-            const prevIsBase = isBaseEmojiCode(prevCode)
-            const prevIsJoiner = prevCode === 0x200D
-            
-            // Only count as standalone if it's not adjacent to a base emoji or joiner
-            if (!prevIsBase && !prevIsJoiner) {
-              emojis.push(char)
-            }
-          }
-          // Explicitly skip gender signs (0x2640, 0x2642) - don't count them at all
-        }
+        // Segment text into grapheme clusters (properly handles multi-codepoint emojis)
+        const segments = [...segmenter.segment(msg.text)]
+        const emojis = segments
+          .map(s => s.segment)
+          .filter(isEmojiGrapheme)
         
         const emojiMap = msg.isFromMe ? emojiCountsYou : emojiCountsThem
         emojis.forEach(emoji => {
-          if (!emoji || emoji.length === 0) return
-          
-          // Skip gender signs completely - check all characters in the emoji
-          let hasGenderSign = false
-          for (let i = 0; i < emoji.length; i++) {
-            const code = emoji.codePointAt(i) || 0
-            if (code === 0x2640 || code === 0x2642) {
-              hasGenderSign = true
-              break
-            }
-          }
-          if (hasGenderSign) {
-            return // Skip any emoji containing gender signs
-          }
-          
-          // Only count if it has at least one base emoji (filters out pure modifier sequences)
-          if (hasBaseEmoji(emoji)) {
-            emojiMap.set(emoji, (emojiMap.get(emoji) || 0) + 1)
-          } else {
-            // For standalone modifiers, only count skin tone modifiers (they render as colored squares)
-            const code = emoji.codePointAt(0) || 0
-            if (code >= 0x1F3FB && code <= 0x1F3FF) {
-              emojiMap.set(emoji, (emojiMap.get(emoji) || 0) + 1)
-            }
-            // Don't count variation selectors, gender signs, etc. as standalone - they don't render
-          }
+          emojiMap.set(emoji, (emojiMap.get(emoji) || 0) + 1)
         })
       })
-      
-      // Filter out emojis that don't display (empty strings, whitespace, etc.) and gender signs
-      const filterValidEmojis = (map: Map<string, number>): Map<string, number> => {
-        const filtered = new Map<string, number>()
-        map.forEach((count, emoji) => {
-          // Skip gender signs - check all characters in the emoji
-          let hasGenderSign = false
-          for (let i = 0; i < emoji.length; i++) {
-            const code = emoji.codePointAt(i) || 0
-            if (code === 0x2640 || code === 0x2642) {
-              hasGenderSign = true
-              break
-            }
-          }
-          if (hasGenderSign) {
-            return // Skip any emoji containing gender signs
-          }
-          
-          // Only keep if emoji is not empty and has visible content
-          if (emoji && emoji.trim().length > 0 && emoji.length > 0) {
-            // Check if it has at least one character that's not a control character
-            let hasVisible = false
-            for (let i = 0; i < emoji.length; i++) {
-              const code = emoji.codePointAt(i) || 0
-              // Check if it's a visible emoji or modifier (but not gender signs)
-              if (
-                isBaseEmojiCode(code) ||
-                (code >= 0x1F3FB && code <= 0x1F3FF)  // Skin tone modifiers
-              ) {
-                hasVisible = true
-                break
-              }
-            }
-            if (hasVisible) {
-              filtered.set(emoji, count)
-            }
-          }
-        })
-        return filtered
-      }
-      
-      const filteredEmojisYou = filterValidEmojis(emojiCountsYou)
-      const filteredEmojisThem = filterValidEmojis(emojiCountsThem)
 
-      const topEmojisYou = Array.from(filteredEmojisYou.entries())
+      const topEmojisYou = Array.from(emojiCountsYou.entries())
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5)
         .map(([emoji, count]) => ({ emoji, count, isFromMe: true }))
       
-      const topEmojisThem = Array.from(filteredEmojisThem.entries())
+      const topEmojisThem = Array.from(emojiCountsThem.entries())
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5)
         .map(([emoji, count]) => ({ emoji, count, isFromMe: false }))

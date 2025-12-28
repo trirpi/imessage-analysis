@@ -16,3 +16,4 @@ This screenshot should show:
 5. Take a screenshot (Cmd+Shift+4 on Mac, or use your browser's screenshot tool)
 6. Save it as `dashboard-sample.png` in this directory
 
+
