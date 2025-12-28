@@ -162,7 +162,7 @@ export default function Home() {
   const [wordsPerWeekData, setWordsPerWeekData] = useState<{ week: string; words: number }[]>([])
   const [wordsPerWeekMessages, setWordsPerWeekMessages] = useState<{ text: string; date: Date; isFromMe: boolean; weekKey: string }[]>([])
   const [conversationRatioData, setConversationRatioData] = useState<{ week: string; you: number; them: number }[]>([])
-  const [responseTimeData, setResponseTimeData] = useState<{ month: string; all: number | null; you: number | null }[]>([])
+  const [responseTimeData, setResponseTimeData] = useState<{ month: string; youToThem: number | null; themToYou: number | null }[]>([])
   const [replyLadderData, setReplyLadderData] = useState<{ doubleTextsYou: number; doubleTextsThem: number; endersYou: number; endersThem: number } | null>(null)
   const [sentimentData, setSentimentData] = useState<{ week: string; you: number | null; them: number | null; all: number | null }[]>([])
   const [loading, setLoading] = useState(false)
@@ -908,8 +908,8 @@ export default function Home() {
 
       // 4. Response Time
       const sortedMessages = [...processedMessages].sort((a, b) => a.date.getTime() - b.date.getTime())
-      const monthlyResponseTimes: Map<string, number[]> = new Map()
-      const monthlyYouResponseTimes: Map<string, number[]> = new Map()
+      const monthlyYouToThemTimes: Map<string, number[]> = new Map()
+      const monthlyThemToYouTimes: Map<string, number[]> = new Map()
       
       for (let i = 1; i < sortedMessages.length; i++) {
         const prev = sortedMessages[i - 1]
@@ -918,25 +918,27 @@ export default function Home() {
         if (prev.isFromMe !== curr.isFromMe) {
           const timeDiffHours = (curr.date.getTime() - prev.date.getTime()) / (1000 * 60 * 60)
           if (timeDiffHours > 0 && timeDiffHours < 168) { // Within a week
-            const times = monthlyResponseTimes.get(curr.monthKey) || []
-            times.push(timeDiffHours)
-            monthlyResponseTimes.set(curr.monthKey, times)
-            
             if (!prev.isFromMe && curr.isFromMe) {
-              const youTimes = monthlyYouResponseTimes.get(curr.monthKey) || []
+              // You replying to them (You → them)
+              const youTimes = monthlyYouToThemTimes.get(curr.monthKey) || []
               youTimes.push(timeDiffHours)
-              monthlyYouResponseTimes.set(curr.monthKey, youTimes)
+              monthlyYouToThemTimes.set(curr.monthKey, youTimes)
+            } else if (prev.isFromMe && !curr.isFromMe) {
+              // Them replying to you (them → You)
+              const themTimes = monthlyThemToYouTimes.get(curr.monthKey) || []
+              themTimes.push(timeDiffHours)
+              monthlyThemToYouTimes.set(curr.monthKey, themTimes)
             }
           }
         }
       }
       
-      const allMonthsArray = Array.from(new Set([...Array.from(monthlyResponseTimes.keys()), ...Array.from(monthlyYouResponseTimes.keys())]))
+      const allMonthsArray = Array.from(new Set([...Array.from(monthlyYouToThemTimes.keys()), ...Array.from(monthlyThemToYouTimes.keys())]))
       const responseTime = allMonthsArray
         .sort()
         .map(month => {
-          const allTimes = monthlyResponseTimes.get(month) || []
-          const youTimes = monthlyYouResponseTimes.get(month) || []
+          const youToThemTimes = monthlyYouToThemTimes.get(month) || []
+          const themToYouTimes = monthlyThemToYouTimes.get(month) || []
           
           const median = (arr: number[]) => {
             if (arr.length === 0) return null
@@ -949,8 +951,8 @@ export default function Home() {
           
           return {
             month,
-            all: median(allTimes),
-            you: median(youTimes)
+            youToThem: median(youToThemTimes),
+            themToYou: median(themToYouTimes)
           }
         })
       setResponseTimeData(responseTime)
@@ -1338,8 +1340,8 @@ export default function Home() {
 
       // 4. Response Time
       const sortedMessages = [...sampleMessages].sort((a, b) => a.date.getTime() - b.date.getTime())
-      const monthlyResponseTimes: Map<string, number[]> = new Map()
-      const monthlyYouResponseTimes: Map<string, number[]> = new Map()
+      const monthlyYouToThemTimes: Map<string, number[]> = new Map()
+      const monthlyThemToYouTimes: Map<string, number[]> = new Map()
       
       for (let i = 1; i < sortedMessages.length; i++) {
         const prev = sortedMessages[i - 1]
@@ -1348,25 +1350,27 @@ export default function Home() {
         if (prev.isFromMe !== curr.isFromMe) {
           const timeDiffHours = (curr.date.getTime() - prev.date.getTime()) / (1000 * 60 * 60)
           if (timeDiffHours > 0 && timeDiffHours < 168) {
-            const times = monthlyResponseTimes.get(curr.monthKey) || []
-            times.push(timeDiffHours)
-            monthlyResponseTimes.set(curr.monthKey, times)
-            
             if (!prev.isFromMe && curr.isFromMe) {
-              const youTimes = monthlyYouResponseTimes.get(curr.monthKey) || []
+              // You replying to them (You → them)
+              const youTimes = monthlyYouToThemTimes.get(curr.monthKey) || []
               youTimes.push(timeDiffHours)
-              monthlyYouResponseTimes.set(curr.monthKey, youTimes)
+              monthlyYouToThemTimes.set(curr.monthKey, youTimes)
+            } else if (prev.isFromMe && !curr.isFromMe) {
+              // Them replying to you (them → You)
+              const themTimes = monthlyThemToYouTimes.get(curr.monthKey) || []
+              themTimes.push(timeDiffHours)
+              monthlyThemToYouTimes.set(curr.monthKey, themTimes)
             }
           }
         }
       }
       
-      const allMonthsArray = Array.from(new Set([...Array.from(monthlyResponseTimes.keys()), ...Array.from(monthlyYouResponseTimes.keys())]))
+      const allMonthsArray = Array.from(new Set([...Array.from(monthlyYouToThemTimes.keys()), ...Array.from(monthlyThemToYouTimes.keys())]))
       const responseTime = allMonthsArray
         .sort()
         .map(month => {
-          const allTimes = monthlyResponseTimes.get(month) || []
-          const youTimes = monthlyYouResponseTimes.get(month) || []
+          const youToThemTimes = monthlyYouToThemTimes.get(month) || []
+          const themToYouTimes = monthlyThemToYouTimes.get(month) || []
           
           const median = (arr: number[]) => {
             if (arr.length === 0) return null
@@ -1379,8 +1383,8 @@ export default function Home() {
           
           return {
             month,
-            all: median(allTimes),
-            you: median(youTimes)
+            youToThem: median(youToThemTimes),
+            themToYou: median(themToYouTimes)
           }
         })
       setResponseTimeData(responseTime)

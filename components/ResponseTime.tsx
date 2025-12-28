@@ -4,18 +4,45 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 interface DataPoint {
   month: string
-  all: number | null
-  you: number | null
+  youToThem: number | null
+  themToYou: number | null
 }
 
 interface ResponseTimeProps {
   data: DataPoint[]
 }
 
+// Custom dot component that shows grey at 0 when there's no data
+const CustomDot = ({ cx, cy, payload, dataKey, activeColor }: any) => {
+  const value = payload[dataKey]
+  const hasData = value !== null && value !== undefined
+  
+  return (
+    <circle
+      cx={cx}
+      cy={hasData ? cy : undefined}
+      r={4}
+      fill={hasData ? activeColor : '#9ca3af'}
+      style={{ 
+        transform: hasData ? undefined : `translateY(${cy}px)`,
+      }}
+    />
+  )
+}
+
 export function ResponseTime({ data }: ResponseTimeProps) {
+  // Transform data to show 0 for null values (for display purposes)
+  const transformedData = data.map(d => ({
+    ...d,
+    youToThemDisplay: d.youToThem ?? 0,
+    themToYouDisplay: d.themToYou ?? 0,
+    youToThemHasData: d.youToThem !== null,
+    themToYouHasData: d.themToYou !== null,
+  }))
+
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={data}>
+      <LineChart data={transformedData}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
         <XAxis 
           dataKey="month" 
@@ -32,28 +59,57 @@ export function ResponseTime({ data }: ResponseTimeProps) {
         />
         <Tooltip 
           contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc', borderRadius: '4px' }}
-          formatter={(value: number) => value !== null ? [`${value.toFixed(1)} hours`, ''] : ['N/A', '']}
+          formatter={(value: number, name: string, props: any) => {
+            const dataKey = name === 'You → them' ? 'youToThem' : 'themToYou'
+            const originalValue = props.payload[dataKey]
+            if (originalValue === null || originalValue === undefined) {
+              return ['No data', name]
+            }
+            return [`${originalValue.toFixed(1)} hours`, name]
+          }}
         />
         <Legend />
         <Line 
           type="monotone" 
-          dataKey="all" 
-          stroke="#a855f7" 
+          dataKey="youToThemDisplay" 
+          stroke="#10b981" 
           strokeWidth={2}
-          dot={{ fill: '#a855f7', r: 4 }}
+          dot={(props: any) => {
+            const hasData = props.payload.youToThemHasData
+            return (
+              <circle
+                key={props.key}
+                cx={props.cx}
+                cy={props.cy}
+                r={4}
+                fill={hasData ? '#10b981' : '#9ca3af'}
+              />
+            )
+          }}
           activeDot={{ r: 6 }}
-          name="All Response Times"
-          connectNulls
+          name="You → them"
+          connectNulls={false}
         />
         <Line 
           type="monotone" 
-          dataKey="you" 
-          stroke="#10b981" 
+          dataKey="themToYouDisplay" 
+          stroke="#a855f7" 
           strokeWidth={2}
-          dot={{ fill: '#10b981', r: 4 }}
+          dot={(props: any) => {
+            const hasData = props.payload.themToYouHasData
+            return (
+              <circle
+                key={props.key}
+                cx={props.cx}
+                cy={props.cy}
+                r={4}
+                fill={hasData ? '#a855f7' : '#9ca3af'}
+              />
+            )
+          }}
           activeDot={{ r: 6 }}
-          name="You → Them"
-          connectNulls
+          name="them → You"
+          connectNulls={false}
         />
       </LineChart>
     </ResponsiveContainer>
